@@ -1,0 +1,546 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>実弾パリィ</title>
+<meta name="description" content="本物の弾速（秒速850m）の弾丸を刀でパリィ。何mまで耐えられる？">
+<!-- ▼Xのカード表示用（公開URLに合わせて書き換える） -->
+<meta property="og:type" content="website">
+<meta property="og:title" content="実弾パリィ">
+<meta property="og:description" content="本物の弾速（秒速850m）の弾丸を刀でパリィ。何mまで耐えられる？">
+<meta property="og:url" content="https://nkworks-games.github.io/jitsudan-parry/">
+<meta property="og:image" content="https://nkworks-games.github.io/jitsudan-parry/card.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#f1e9d8">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Yuji+Syuku&family=Zen+Old+Mincho:wght@400;700&display=swap" rel="stylesheet">
+<style>
+html,body{margin:0;height:100%;background:#f1e9d8;overflow:hidden;overscroll-behavior:none}
+body{touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent}
+canvas{display:block;position:absolute;left:0;top:0}
+#sa{position:fixed;left:0;top:0;width:0;height:0;padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom);visibility:hidden}
+</style>
+</head>
+<body>
+<div id="sa"></div>
+<canvas id="c"></canvas>
+<noscript>JavaScriptをオンにして遊んでください</noscript>
+<script>
+(() => {
+'use strict';
+// ================= 基本設定（数値はここで調整） =================
+const V = 850;          // 弾速：秒速850m（7.62mm狙撃銃クラスの実際の値）
+const SND = 343;        // 音速：秒速343m（銃声が届くまでの時間に使う）
+const STAGES = [1000, 800, 600, 450, 350, 270, 210, 170, 140, 115, 95, 80, 65, 50, 40, 30, 20, 10, 5]; // 何m先から撃ってくるか
+const LATE = 0.04;      // 弾が届いた後も少しだけ受け付ける（タッチの遅れ分）
+const earlyOf = i => Math.max(0.07, 0.16 - 0.006 * i); // 弾が届く何秒前からパリィになるか
+const AIM_MIN = 0.7, AIM_MAX = 1.9; // 構えてから撃つまでの時間（毎回ランダム）
+const RECOVER = (window.__RECOVER || 0.6); // 空振りした後、刀を振れない時間（秒）
+// 超ハードモード
+const HARD_D = 10;                    // 距離10m（弾は0.012秒で届く）
+const HARD_OFFSET = 0.019;            // 画面が表示されるまでの遅れの補正
+const HARD_WIN = [HARD_OFFSET, HARD_OFFSET + HARD_D / V]; // パリィできる幅＝弾が飛んでいる0.012秒だけ（現実と同じ）
+const RING_MIN = 0.6, RING_MAX = 2.4; // 円が閉じきるまでの時間（毎回ランダム）
+const distOf = i => STAGES[Math.min(i, STAGES.length - 1)];
+
+const W = 360;
+const PAPER = '#f1e9d8', INK = '#1c1916', SUMI = '#5f574d', USU = '#a89e8a', SHU = '#c7351f', STEEL = '#dcd8cf';
+const FD = "'Yuji Syuku','Hiragino Mincho ProN','Yu Mincho',serif";
+const FB = "'Zen Old Mincho','Hiragino Mincho ProN','Yu Mincho',serif";
+const URL_PUBLIC = 'https://nkworks-games.github.io/jitsudan-parry/';
+
+// ================= 画面サイズ =================
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+let H = 700, S = 1, DPR = 1, OX = 0, OY = 0, paperCv = null;
+const L = {};
+function layout() {
+  L.topH = Math.round(H * 0.56);
+  L.hor = Math.round(L.topH * 0.5);
+  L.tgt = { x: W / 2, y: L.topH * 0.74 };
+  L.gY = L.topH + (H - L.topH) * 0.52;
+  L.sx = 52; L.ex = W - 52;
+  L.mute = { x: W - 22, y: L.topH + 22 };
+}
+function resize() {
+  const sa = document.getElementById('sa'), cs = getComputedStyle(sa);
+  const st = parseFloat(cs.paddingTop) || 0, sb = parseFloat(cs.paddingBottom) || 0;
+  const vw = window.innerWidth, vh = window.innerHeight - st - sb;
+  S = Math.min(vw / W, vh / 600); H = Math.min(vh / S, 820);
+  DPR = Math.min(window.devicePixelRatio || 1, 2.5);
+  const cw = W * S, ch = H * S; OX = (vw - cw) / 2; OY = st + (vh - ch) / 2;
+  Object.assign(cv.style, { width: cw + 'px', height: ch + 'px', left: OX + 'px', top: OY + 'px' });
+  cv.width = Math.round(cw * DPR); cv.height = Math.round(ch * DPR);
+  layout(); makePaper();
+}
+function rng(seed) { return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+function makePaper() { // 和紙の質感（1回だけ描いておく）
+  paperCv = document.createElement('canvas'); paperCv.width = cv.width; paperCv.height = cv.height;
+  const p = paperCv.getContext('2d'); p.setTransform(DPR * S, 0, 0, DPR * S, 0, 0);
+  p.fillStyle = PAPER; p.fillRect(0, 0, W, H);
+  const r = rng(11);
+  for (let i = 0; i < 1100; i++) {
+    const x = r() * W, y = r() * H, l = 3 + r() * 16, a = r() * Math.PI * 2;
+    p.strokeStyle = `rgba(110,90,60,${0.03 + r() * 0.06})`; p.lineWidth = 0.4 + r() * 0.8;
+    p.beginPath(); p.moveTo(x, y); p.quadraticCurveTo(x + Math.cos(a) * l * 0.5 + r() * 3, y + Math.sin(a) * l * 0.5, x + Math.cos(a) * l, y + Math.sin(a) * l); p.stroke();
+  }
+  const g = p.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.3, W / 2, H / 2, Math.max(W, H) * 0.75);
+  g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(80,60,30,0.2)'); p.fillStyle = g; p.fillRect(0, 0, W, H);
+}
+window.addEventListener('resize', resize);
+
+// ================= 保存 =================
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { } }
+};
+
+// ================= サウンド =================
+let AC = null, NOISE = null, muted = store.get('jp_mute', false);
+function audioInit() {
+  try {
+    if (!AC) {
+      AC = new (window.AudioContext || window.webkitAudioContext)();
+      const b = AC.createBuffer(1, AC.sampleRate * 1.2, AC.sampleRate), d = b.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+      NOISE = b;
+      const s = AC.createBufferSource(); s.buffer = AC.createBuffer(1, 1, 22050); s.connect(AC.destination); s.start(0);
+    }
+    if (AC.state === 'suspended') AC.resume();
+  } catch (e) { }
+}
+function tone(f1, f2, dur, type = 'sine', vol = 0.15, delay = 0) {
+  if (!AC || muted) return;
+  const t = AC.currentTime + delay, o = AC.createOscillator(), g = AC.createGain();
+  o.type = type; o.frequency.setValueAtTime(f1, t); o.frequency.exponentialRampToValueAtTime(Math.max(1, f2), t + dur);
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0008, t + dur);
+  o.connect(g); g.connect(AC.destination); o.start(t); o.stop(t + dur + 0.03);
+}
+function noise(dur, vol, type = 'lowpass', freq = 1200, delay = 0) {
+  if (!AC || muted || !NOISE) return;
+  const t = AC.currentTime + delay, s = AC.createBufferSource(), f = AC.createBiquadFilter(), g = AC.createGain();
+  s.buffer = NOISE; f.type = type; f.frequency.value = freq;
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0008, t + dur);
+  s.connect(f); f.connect(g); g.connect(AC.destination); s.start(t); s.stop(t + dur + 0.02);
+}
+const SFX = {
+  cock() { noise(0.03, 0.12, 'highpass', 3000); noise(0.03, 0.1, 'highpass', 2500, 0.12); },
+  bang(d) { // 銃声は音速で遅れて届く
+    const dl = d / SND, v = Math.max(0.06, Math.min(0.7, 0.7 * Math.sqrt(40 / d)));
+    noise(0.5, v, 'lowpass', d > 300 ? 500 : 1400, dl); tone(120, 40, 0.4, 'sine', v * 0.8, dl);
+  },
+  crack() { noise(0.035, 0.35, 'highpass', 2500); },
+  kiin() { [2650, 3970, 5300].forEach((f, i) => tone(f, f * 0.995, 0.9 - i * 0.2, 'sine', 0.16 / (i + 1))); noise(0.04, 0.3, 'highpass', 4000); },
+  hit() { noise(0.35, 0.45, 'lowpass', 600); tone(150, 45, 0.35, 'sine', 0.4); },
+  swish() { noise(0.18, 0.2, 'bandpass', 1800); },
+  step() { noise(0.06, 0.05, 'lowpass', 400); }
+};
+
+// ================= 描画の道具（筆の線） =================
+const lerp = (a, b, t) => a + (b - a) * t;
+function brush(pts, w, col = INK, tp = [0.25, 1, 0.3]) {
+  const n = pts.length; if (n < 2) return;
+  const lf = [], rt = [];
+  for (let i = 0; i < n; i++) {
+    const p = pts[i], a = pts[Math.max(0, i - 1)], b = pts[Math.min(n - 1, i + 1)];
+    let dx = b[0] - a[0], dy = b[1] - a[1]; const l = Math.hypot(dx, dy) || 1; dx /= l; dy /= l;
+    const t = i / (n - 1), k = t < 0.5 ? lerp(tp[0], tp[1], t * 2) : lerp(tp[1], tp[2], (t - 0.5) * 2), hw = w * k / 2;
+    lf.push([p[0] - dy * hw, p[1] + dx * hw]); rt.push([p[0] + dy * hw, p[1] - dx * hw]);
+  }
+  ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(lf[0][0], lf[0][1]);
+  for (let i = 1; i < n; i++) ctx.lineTo(lf[i][0], lf[i][1]);
+  for (let i = n - 1; i >= 0; i--) ctx.lineTo(rt[i][0], rt[i][1]);
+  ctx.closePath(); ctx.fill();
+}
+function qc(x1, y1, cx, cy, x2, y2, n = 12) {
+  const o = []; for (let i = 0; i <= n; i++) { const t = i / n, u = 1 - t; o.push([u * u * x1 + 2 * u * t * cx + t * t * x2, u * u * y1 + 2 * u * t * cy + t * t * y2]); } return o;
+}
+function text(s, x, y, size, col = INK, align = 'center', font = FB, alpha = 1, weight = '') {
+  ctx.globalAlpha = alpha; ctx.fillStyle = col; ctx.font = `${weight}${size}px ${font}`;
+  ctx.textAlign = align; ctx.textBaseline = 'middle'; ctx.fillText(s, x, y); ctx.globalAlpha = 1;
+}
+function blotch(x, y, r, seed, col = SHU, alpha = 0.85) { // 朱の墨だまり
+  const g = rng(seed); ctx.fillStyle = col; ctx.globalAlpha = alpha; ctx.beginPath();
+  const n = 14; for (let i = 0; i <= n; i++) { const a = i / n * Math.PI * 2, k = r * (0.7 + g() * 0.5); const px = x + Math.cos(a) * k, py = y + Math.sin(a) * k; i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }
+  ctx.closePath(); ctx.fill();
+  for (let i = 0; i < 6; i++) { const a = g() * Math.PI * 2, d = r * (1.1 + g() * 0.9); ctx.beginPath(); ctx.arc(x + Math.cos(a) * d, y + Math.sin(a) * d, r * (0.06 + g() * 0.12), 0, Math.PI * 2); ctx.fill(); }
+  ctx.globalAlpha = 1;
+}
+
+// ================= ゲームの状態 =================
+let clock = () => performance.now() / 1000; // テスト用に差し替えられる時計
+const G = {
+  state: 'title', st0: 0, idx: 0, count: 0, best: store.get('jp_best', 0), bestD: store.get('jp_bestD', 0), newBest: false,
+  d: 1000, prevD: 1000, aimDur: 1, fireT: 0, tf: 1, early: 0.16, tapT: null, reason: '', diff: 0, lastRT: null,
+  shake: 0, swing: 0, t: 0, lastSafe: 0, recUntil: 0, whiffT: -9,
+  mode: 'normal', bestHard: store.get('jp_best_hard', 0), winS: 0, winE: 0, ringStart: 0, ringDur: 1, whiffDiff: null
+};
+function setState(s) { G.state = s; G.st0 = clock(); }
+const since = () => clock() - G.st0;
+function startRun(mode = G.mode) { G.mode = mode; G.idx = 0; G.count = 0; G.newBest = false; G.prevD = mode === 'hard' ? 14 : 1400; G.lastSafe = 0; G.lastRT = null; nextStage(); }
+function nextStage() {
+  G.d = G.mode === 'hard' ? HARD_D : distOf(G.idx); G.tf = G.d / V; G.early = earlyOf(G.idx);
+  if (G.mode === 'hard') { G.winS = HARD_WIN[0]; G.winE = HARD_WIN[1]; } // パリィになる時間帯（発射からの秒数）
+  else { G.winS = G.tf - G.early; G.winE = G.tf + LATE; }
+  G.tapT = null; G.recUntil = 0; G.whiffT = -9; G.whiffDiff = null; setState('approach'); SFX.step();
+}
+const approachDur = () => G.mode === 'hard' ? (G.idx === 0 ? 1.2 : 0.8) : (G.idx === 0 ? 1.4 : 1.0);
+function die(reason, diff) {
+  G.reason = reason; G.diff = diff; setState('dead'); G.shake = 0.35;
+  SFX.hit(); try { navigator.vibrate && navigator.vibrate([60, 40, 120]); } catch (e) { }
+  if (G.mode === 'hard') { if (G.count > G.bestHard) { G.newBest = true; G.bestHard = G.count; store.set('jp_best_hard', G.count); } }
+  else if (G.count > G.best || (G.count === G.best && G.lastSafe && (!G.bestD || G.lastSafe < G.bestD))) {
+    G.newBest = G.count > G.best; G.best = G.count; G.bestD = G.lastSafe; store.set('jp_best', G.best); store.set('jp_bestD', G.bestD);
+  }
+}
+function whiff(t) { // 空振り：死なないが、少しの間 刀を振れない
+  G.recUntil = t + RECOVER; G.whiffT = clock(); G.swing = 1; SFX.swish();
+}
+function tap(t) { // t：タップした時刻（秒）
+  if (G.state !== 'aim' && G.state !== 'fire') return;               // 近づいてくる間などは無視
+  if (t < G.recUntil) return;                                        // 空振りの隙の間は振れない
+  if (G.state === 'aim') { G.whiffDiff = t - (G.st0 + G.aimDur) - G.winS; whiff(t); return; } // 撃つ前に振った＝空振り
+  const dt = t - G.fireT;                                            // 発射からの経過
+  if (dt < G.winS) { G.whiffDiff = dt - G.winS; whiff(t); return; } // 早すぎ＝空振り
+  if (dt <= G.winE) {                                                 // パリィ成功
+    G.count++; G.lastRT = dt; G.lastSafe = G.d; setState('parried'); G.swing = 1; G.shake = 0.12;
+    SFX.crack(); SFX.kiin(); try { navigator.vibrate && navigator.vibrate(25); } catch (e) { }
+  }
+}
+function update(dt) {
+  const now = clock(); G.t += dt;
+  G.shake = Math.max(0, G.shake - dt); G.swing = Math.max(0, G.swing - dt * 1.4);
+  const s = since();
+  if (G.state === 'approach') {
+    if (s >= approachDur()) {
+      if (G.mode === 'hard') { G.ringStart = 0.4 + Math.random() * 0.6; G.ringDur = RING_MIN + Math.random() * (RING_MAX - RING_MIN); G.aimDur = G.ringStart + G.ringDur; }
+      else G.aimDur = AIM_MIN + Math.random() * (AIM_MAX - AIM_MIN);
+      setState('aim'); SFX.cock();
+    }
+  } else if (G.state === 'aim') {
+    if (s >= G.aimDur) { setState('fire'); G.fireT = G.st0; SFX.bang(G.d); }
+  } else if (G.state === 'fire') {
+    if (now - G.fireT > G.winE) die(G.recUntil > G.fireT + G.winS ? 'whiff' : 'late', null);
+  } else if (G.state === 'parried') {
+    if (s >= 1.1) { G.prevD = G.d; G.idx++; nextStage(); }
+  }
+}
+
+// ================= 上半分：自分視点 =================
+function enemyH(d) { return Math.max(14, Math.min(200, 62 * Math.pow(100 / d, 0.6))); } // 近すぎても画面からはみ出さない大きさまで
+function curD() { // 近づいてくる途中の距離
+  if (G.state === 'approach') { const k = Math.min(1, since() / approachDur()); return lerp(G.prevD, G.d, 1 - Math.pow(1 - k, 3)); }
+  return G.state === 'title' ? 600 : G.d;
+}
+function shooterFront(x, feetY, h, aim, flash) {
+  const k = h / 100;
+  ctx.save(); ctx.translate(x, feetY); ctx.scale(k, k);
+  brush([[-9, 0], [-8, -22], [-6, -40]], 8, INK, [0.8, 1, 0.9]); brush([[9, 0], [8, -22], [6, -40]], 8, INK, [0.8, 1, 0.9]);
+  ctx.fillStyle = INK; ctx.beginPath(); ctx.moveTo(-18, -34); ctx.quadraticCurveTo(-15, -56, -12, -73); ctx.lineTo(12, -73); ctx.quadraticCurveTo(15, -56, 18, -34); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.arc(0, -80, 7.5, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(-23, -82); ctx.quadraticCurveTo(0, -103, 23, -82); ctx.quadraticCurveTo(0, -86, -23, -82); ctx.fill(); // 笠
+  if (aim) {
+    brush([[-12, -70], [-8, -62], [-1, -64]], 6, INK, [1, 1, 0.8]); brush([[12, -70], [8, -62], [1, -64]], 6, INK, [1, 1, 0.8]);
+    ctx.fillStyle = INK; ctx.beginPath(); ctx.arc(0, -66, 5.5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = PAPER; ctx.beginPath(); ctx.arc(0, -66, 2, 0, Math.PI * 2); ctx.fill();
+  } else {
+    brush([[-12, -70], [-9, -56], [-2, -50]], 6, INK, [1, 1, 0.8]); brush([[12, -70], [9, -57], [2, -52]], 6, INK, [1, 1, 0.8]);
+    brush([[-20, -38], [26, -82]], 3.6, INK, [1, 1, 0.7]);
+  }
+  ctx.restore();
+  if (flash > 0) {
+    const mx = x, my = feetY - 66 * k, r = (6 + h * 0.14) * (0.6 + flash);
+    ctx.save(); ctx.globalAlpha = Math.min(1, flash * 1.5);
+    ctx.strokeStyle = SHU; ctx.lineWidth = Math.max(1.5, r * 0.12); ctx.lineCap = 'round';
+    for (let i = 0; i < 10; i++) { const a = i / 10 * Math.PI * 2 + 0.3; ctx.beginPath(); ctx.moveTo(mx + Math.cos(a) * r * 0.3, my + Math.sin(a) * r * 0.3); ctx.lineTo(mx + Math.cos(a) * r * (i % 2 ? 0.9 : 1.5), my + Math.sin(a) * r * (i % 2 ? 0.9 : 1.5)); ctx.stroke(); }
+    ctx.fillStyle = '#fff8e8'; ctx.beginPath(); ctx.arc(mx, my, r * 0.45, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+  }
+  return { x, y: feetY - 66 * k };
+}
+function katana(swing) { // swing：0＝構え、1＝振り切り
+  const hx = W * 0.9, hy = L.topH - 4;
+  const a0 = Math.atan2(L.topH * 0.5 - hy, W * 0.64 - hx), aT = Math.atan2(L.tgt.y - hy, L.tgt.x - hx);
+  const p = swing > 0 ? Math.sin((1 - swing) * Math.PI) : 0;
+  const a = lerp(a0, aT - 0.3, Math.min(1, p * 1.2)), len = 250;
+  ctx.save(); ctx.translate(hx, hy); ctx.rotate(a);
+  ctx.fillStyle = INK; ctx.beginPath(); ctx.moveTo(-70, -6); ctx.lineTo(0, -5); ctx.lineTo(0, 5); ctx.lineTo(-70, 6); ctx.closePath(); ctx.fill(); // 柄
+  ctx.strokeStyle = PAPER; ctx.lineWidth = 1.2; for (let i = -64; i < -4; i += 9) { ctx.beginPath(); ctx.moveTo(i, -5); ctx.lineTo(i + 5, 5); ctx.moveTo(i + 5, -5); ctx.lineTo(i, 5); ctx.stroke(); }
+  ctx.fillStyle = STEEL; ctx.beginPath(); ctx.moveTo(4, -4.5); ctx.quadraticCurveTo(len * 0.5, -7 - 4, len, -10); ctx.quadraticCurveTo(len * 0.55, 1, 4, 4.5); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = INK; ctx.lineWidth = 1.6; ctx.stroke();
+  ctx.strokeStyle = 'rgba(255,255,255,.8)'; ctx.lineWidth = 1; ctx.beginPath();
+  for (let i = 0; i <= 20; i++) { const x = 10 + i * (len - 30) / 20, y = lerp(1.5, -7.5, i / 20) + Math.sin(i * 1.7) * 0.9; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); } ctx.stroke(); // 刃文
+  ctx.fillStyle = INK; ctx.beginPath(); ctx.ellipse(2, 0, 4, 11, 0, 0, Math.PI * 2); ctx.fill(); // 鍔
+  ctx.restore();
+}
+function drawTop() {
+  ctx.save(); ctx.beginPath(); ctx.rect(0, 0, W, L.topH); ctx.clip();
+  const hy = L.hor;
+  // 遠くの山（墨のにじみ）
+  const mts = [[-10, 20], [30, 36], [70, 24], [120, 52], [165, 30], [205, 42], [250, 22], [300, 48], [370, 26]];
+  ctx.beginPath(); ctx.moveTo(-10, hy); for (const [x, h] of mts) ctx.lineTo(x, hy - h); ctx.lineTo(370, hy); ctx.closePath();
+  let g = ctx.createLinearGradient(0, hy - 52, 0, hy); g.addColorStop(0, 'rgba(40,34,28,0.22)'); g.addColorStop(1, 'rgba(40,34,28,0.04)'); ctx.fillStyle = g; ctx.fill();
+  g = ctx.createLinearGradient(0, hy, 0, L.topH); g.addColorStop(0, 'rgba(60,50,38,0.14)'); g.addColorStop(1, 'rgba(60,50,38,0)'); ctx.fillStyle = g; ctx.fillRect(0, hy, W, L.topH - hy);
+  ctx.strokeStyle = 'rgba(40,34,28,0.12)'; ctx.lineWidth = 1;
+  for (const k of [-1.2, -0.5, 0.5, 1.2]) { ctx.beginPath(); ctx.moveTo(W / 2 + k * 8, hy); ctx.lineTo(W / 2 + k * 260, L.topH); ctx.stroke(); }
+  brush(qc(-10, hy, W / 2, hy + 2, W + 10, hy, 16), 2.2, INK, [0.3, 1, 0.3]);
+  // 射手
+  const d = curD(), h = enemyH(d), feet = hy + 4 + h * 0.5; // 近いほど足元が手前（下）に来る
+  const aim = G.state === 'aim' || G.state === 'fire' || G.state === 'parried' || G.state === 'dead';
+  const fl = G.state === 'fire' ? Math.max(0, 1 - (clock() - G.fireT) / 0.09) : 0;
+  const mz = shooterFront(W / 2, feet, h, aim, fl);
+  if (G.mode === 'hard' && (G.state === 'aim' || G.state === 'fire' || G.state === 'approach')) { // 超ハード：銃を中心に狭まる円
+    ctx.save(); ctx.strokeStyle = 'rgba(95,87,77,.5)'; ctx.lineWidth = 1.2; ctx.setLineDash([3, 4]);
+    ctx.beginPath(); ctx.arc(mz.x, mz.y, 8, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+    if (G.state === 'aim') {
+      const e = since() - G.ringStart;
+      if (e >= 0) { const r = lerp(140, 8, Math.min(1, e / G.ringDur)); ctx.strokeStyle = SHU; ctx.lineWidth = 3.2; ctx.beginPath(); ctx.arc(mz.x, mz.y, r, 0, Math.PI * 2); ctx.stroke(); }
+    } else if (G.state === 'fire') { ctx.strokeStyle = SHU; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(mz.x, mz.y, 8, 0, Math.PI * 2); ctx.stroke(); }
+    ctx.restore();
+  }
+  // 弾
+  if (G.state === 'fire') {
+    const p = Math.min(1, (clock() - G.fireT) / G.tf), e = p * p;
+    const x = lerp(mz.x, L.tgt.x, e), y = lerp(mz.y, L.tgt.y, e), r = 1.2 + 15 * Math.pow(p, 5);
+    const pe = Math.max(0, p - 0.08) ** 2;
+    ctx.strokeStyle = 'rgba(28,25,22,.35)'; ctx.lineWidth = Math.max(1, r * 0.8); ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(lerp(mz.x, L.tgt.x, pe), lerp(mz.y, L.tgt.y, pe)); ctx.lineTo(x, y); ctx.stroke();
+    ctx.fillStyle = INK; ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  }
+  // 刀
+  katana(G.swing);
+  // パリィの火花
+  if (G.state === 'parried') {
+    const s = since(), a = Math.max(0, 1 - s / 0.5), cx = L.tgt.x, cy = L.tgt.y;
+    if (a > 0) {
+      ctx.save(); ctx.globalAlpha = a; ctx.strokeStyle = SHU; ctx.lineCap = 'round';
+      for (let i = 0; i < 14; i++) { const an = i / 14 * Math.PI * 2 + i, r0 = 10 + s * 60, r1 = r0 + 18 + (i % 3) * 14; ctx.lineWidth = 3 - (i % 3); ctx.beginPath(); ctx.moveTo(cx + Math.cos(an) * r0, cy + Math.sin(an) * r0); ctx.lineTo(cx + Math.cos(an) * r1, cy + Math.sin(an) * r1); ctx.stroke(); }
+      ctx.fillStyle = '#fffaf0'; ctx.beginPath(); ctx.arc(cx, cy, 14 * a, 0, Math.PI * 2); ctx.fill(); ctx.restore();
+      ctx.fillStyle = INK; ctx.beginPath(); ctx.arc(cx - s * 420, cy - s * 260, 3, 0, Math.PI * 2); ctx.fill(); // はじかれた弾
+    }
+    const sc = 1 + 0.5 * Math.max(0, 1 - s * 7);
+    ctx.save(); ctx.translate(cx - 70, cy - 70); ctx.scale(sc, sc); ctx.rotate(-0.12);
+    text('キィン！', 0, 0, 40, SHU, 'center', FD, Math.min(1, (1.1 - s) * 3)); ctx.restore();
+  }
+  const wa = clock() - G.whiffT;
+  if ((G.state === 'aim' || G.state === 'fire') && wa < 0.6) text('空振り', L.tgt.x - 60, L.tgt.y - 50, 26, SUMI, 'center', FD, 1 - wa / 0.6);
+  if (G.state === 'dead') {
+    blotch(L.tgt.x, L.tgt.y, 40, 5, SHU, 0.9); blotch(L.tgt.x + 60, L.tgt.y - 30, 16, 9, SHU, 0.7); blotch(L.tgt.x - 50, L.tgt.y + 20, 12, 13, SHU, 0.7);
+  }
+  ctx.restore();
+  // HUD
+  if (G.mode === 'hard') text('超ハード', 14, 26, 22, SHU, 'left', FD); else text(`第${G.idx + 1}射`, 14, 26, 22, INK, 'left', FD);
+  text('距離', W / 2, 20, 13, SUMI);
+  text(`${Math.round(d)}m`, W / 2, 50, 42, INK, 'center', FD);
+  text(`弾速 秒速${V}m ・ 到達まで ${(d / V).toFixed(3)}秒`, W / 2, 84, 13, SUMI);
+  // 区切り線
+  brush(qc(-6, L.topH, W / 2, L.topH + 2, W + 6, L.topH, 16), 3.2, INK, [0.4, 1, 0.4]);
+}
+
+// ================= 下半分：横から見た図 =================
+function samuraiSide(x, gy, swing) {
+  ctx.save(); ctx.translate(x, gy);
+  brush([[-4, 0], [-3, -14]], 4); brush([[4, 0], [3, -14]], 4);
+  ctx.fillStyle = INK; ctx.beginPath(); ctx.moveTo(-8, -12); ctx.lineTo(-5, -30); ctx.lineTo(5, -30); ctx.lineTo(9, -12); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.arc(1, -35, 5, 0, Math.PI * 2); ctx.fill(); brush([[-2, -40], [-6, -43]], 3); // まげ
+  const a = swing > 0 ? lerp(-1.1, 0.5, Math.sin((1 - swing) * Math.PI)) : -1.1;
+  ctx.save(); ctx.translate(6, -24); ctx.rotate(a); ctx.strokeStyle = INK; ctx.lineWidth = 1.6; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(-4, 0); ctx.lineTo(28, -2); ctx.stroke(); ctx.restore();
+  ctx.restore();
+}
+function shooterSide(x, gy) {
+  ctx.save(); ctx.translate(x, gy);
+  brush([[-4, 0], [-3, -14]], 4); brush([[4, 0], [3, -14]], 4);
+  ctx.fillStyle = INK; ctx.beginPath(); ctx.moveTo(-9, -12); ctx.lineTo(-5, -30); ctx.lineTo(5, -30); ctx.lineTo(8, -12); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.arc(-1, -35, 5, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(-12, -37); ctx.quadraticCurveTo(-1, -48, 10, -37); ctx.closePath(); ctx.fill();
+  const aim = G.state === 'aim' || G.state === 'fire' || G.state === 'parried' || G.state === 'dead';
+  ctx.strokeStyle = INK; ctx.lineWidth = 2.2; ctx.lineCap = 'round'; ctx.beginPath();
+  if (aim) { ctx.moveTo(4, -27); ctx.lineTo(-26, -27); } else { ctx.moveTo(6, -14); ctx.lineTo(-14, -34); }
+  ctx.stroke(); ctx.restore();
+}
+function drawBottom() {
+  const gy = L.gY, sx = L.sx, ex = L.ex, tw = ex - sx, by = gy - 27, d = curD();
+  // パリィできる範囲（朱）
+  if (G.state !== 'title' && G.mode !== 'hard') {
+    const zw = Math.min(tw, G.early * V / d * tw);
+    ctx.fillStyle = 'rgba(199,53,31,.13)'; ctx.fillRect(sx + 8, by - 12, zw, 24);
+    ctx.strokeStyle = 'rgba(199,53,31,.5)'; ctx.lineWidth = 1; ctx.setLineDash([3, 3]); ctx.strokeRect(sx + 8, by - 12, zw, 24); ctx.setLineDash([]);
+    if (zw < tw - 40 && (G.state === 'approach' || G.state === 'aim')) text('ここで弾く', sx + 8 + zw + 4, by - 20, 11, SHU, 'left'); // 発射されたら消す
+  }
+  brush(qc(10, gy, W / 2, gy + 1.5, W - 10, gy, 16), 2, INK, [0.3, 1, 0.3]);
+  // 目盛り
+  ctx.strokeStyle = SUMI; ctx.lineWidth = 1;
+  for (let i = 0; i <= 10; i++) { const x = sx + tw * i / 10; ctx.beginPath(); ctx.moveTo(x, gy + 4); ctx.lineTo(x, gy + (i % 5 ? 8 : 12)); ctx.stroke(); }
+  text('0m', sx, gy + 24, 12, SUMI); text(`${Math.round(d / 2)}m`, sx + tw / 2, gy + 24, 12, SUMI); text(`${Math.round(d)}m`, ex, gy + 24, 12, SUMI);
+  samuraiSide(sx, gy, G.swing); shooterSide(ex, gy);
+  if ((G.state === 'aim' || G.state === 'fire') && clock() < G.recUntil) text('隙', sx - 2, gy - 58, 16, SUMI, 'center', FD);
+  if (G.state === 'fire' || G.state === 'parried' || G.state === 'dead') {
+    const e = clock() - G.fireT;
+    // 銃声（音速で広がる輪）：弾のほうが速いのが見える
+    const sr = e * SND / d * tw;
+    if (sr < tw * 1.3) { ctx.strokeStyle = 'rgba(95,87,77,.5)'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.arc(ex - 26, by, Math.max(1, sr), Math.PI * 0.55, Math.PI * 1.45); ctx.stroke(); }
+    if (sr > 4 && sr < tw) text('銃声', ex - 26 - sr, by - 26, 11, SUMI);
+    // 弾
+    let bx;
+    if (G.state === 'fire') bx = ex - 26 - (tw - 34) * Math.min(1, e / G.tf);
+    else if (G.state === 'parried') bx = sx + 8 + (tw - 34) * Math.min(1, since() / 0.5);
+    else bx = sx + 8;
+    if (G.state !== 'dead') {
+      ctx.strokeStyle = 'rgba(28,25,22,.4)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(bx, by);
+      ctx.lineTo(bx + (G.state === 'fire' ? 22 : -22), by); ctx.stroke();
+      ctx.fillStyle = G.state === 'parried' ? SHU : INK; ctx.beginPath(); ctx.arc(bx, by, 3.2, 0, Math.PI * 2); ctx.fill();
+    }
+    if (G.state === 'fire' && G.idx === 0) text('銃声より先に 弾が届く', W / 2, by - 44, 12, SUMI);
+  }
+  // 下の案内
+  const yb = H - 34;
+  const hard = G.mode === 'hard';
+  if (G.state === 'approach') text(hard ? (G.idx === 0 ? '10m先で 構えた…' : '次の弾…') : (G.idx === 0 ? '敵が 構える…' : `${Math.round(G.d)}m まで 近づいてきた`), W / 2, yb, 16, INK);
+  else if (G.state === 'aim' || G.state === 'fire') text(hard ? '円が いちばん小さくなる瞬間に タップ' : '弾が 届く瞬間に タップ', W / 2, yb, hard ? 15 : 17, INK, 'center', FB, 0.6 + 0.4 * Math.sin(G.t * 6));
+  else if (G.state === 'parried') text(`発射から ${G.lastRT.toFixed(3)}秒で 弾いた`, W / 2, yb, 15, SHU);
+  text(`${G.mode === 'hard' ? '連続パリィ' : 'パリィ'} ${G.count}`, 16, L.topH + 24, 18, INK, 'left', FD);
+}
+function drawMute() {
+  const { x, y } = L.mute; ctx.save(); ctx.translate(x, y); ctx.strokeStyle = INK; ctx.fillStyle = INK; ctx.lineWidth = 1.6;
+  ctx.beginPath(); ctx.moveTo(-8, -3); ctx.lineTo(-4, -3); ctx.lineTo(1, -8); ctx.lineTo(1, 8); ctx.lineTo(-4, 3); ctx.lineTo(-8, 3); ctx.closePath(); ctx.fill();
+  if (muted) { ctx.beginPath(); ctx.moveTo(4, -4); ctx.lineTo(10, 4); ctx.moveTo(10, -4); ctx.lineTo(4, 4); ctx.stroke(); }
+  else { ctx.beginPath(); ctx.arc(2, 0, 5, -0.9, 0.9); ctx.stroke(); ctx.beginPath(); ctx.arc(2, 0, 9, -0.9, 0.9); ctx.stroke(); }
+  ctx.restore();
+}
+
+// ================= タイトル・結果 =================
+function hanko(x, y, s) {
+  ctx.save(); ctx.translate(x, y); ctx.rotate(0.06); ctx.fillStyle = SHU; ctx.fillRect(-s / 2, -s / 2, s, s);
+  ctx.strokeStyle = PAPER; ctx.lineWidth = 2; ctx.strokeRect(-s / 2 + 4, -s / 2 + 4, s - 8, s - 8);
+  text('NK', 0, 1, s * 0.42, PAPER, 'center', FD); ctx.restore();
+}
+function drawTitle() {
+  // 背景に大きな筆の一閃
+  brush(qc(-20, H * 0.46, W * 0.5, H * 0.36, W + 20, H * 0.24, 20), 34, 'rgba(28,25,22,.08)', [0.1, 1, 0.05]);
+  text('実弾', W / 2 - 4, H * 0.16, 76, INK, 'center', FD);
+  text('パリィ', W / 2 + 6, H * 0.27, 70, INK, 'center', FD);
+  hanko(W / 2 + 118, H * 0.31, 38);
+  brush(qc(W * 0.16, H * 0.345, W * 0.5, H * 0.335, W * 0.84, H * 0.34, 14), 5, SHU, [0.1, 1, 0.1]);
+  text('本物の弾速で、刀ではじけ。', W / 2, H * 0.395, 18, INK);
+  const lines = ['弾の速さは 秒速850m（本物の狙撃銃）', '弾が届く瞬間にタップで パリィ', '早く振ると空振り（少しの間 振れない）'];
+  lines.forEach((s, i) => text(s, W / 2, H * 0.455 + i * 25, 14, i === 0 ? SHU : SUMI));
+  text('モードを選んでください', W / 2, H * 0.575, 14, INK, 'center', FB, 0.55 + 0.45 * Math.sin(G.t * 3));
+  const b = titleBtns();
+  box2(b.normal, PAPER, INK, '通常モード', '1000m先から だんだん近づいてくる');
+  box2(b.hard, INK, PAPER, '超ハードモード', '10m・円が閉じた瞬間に 撃ってくる');
+  text(`ベスト　通常 ${G.best}回${G.bestD ? `（${G.bestD}m）` : ''}　／　超ハード ${G.bestHard}回`, W / 2, H * 0.855, 13, SUMI);
+  text('N.K. Works', W / 2, H - 22, 12, USU);
+}
+function titleBtns() { return { normal: { x: W / 2, y: H * 0.65, w: 260, h: 62 }, hard: { x: W / 2, y: H * 0.765, w: 260, h: 62 } }; }
+function resultBtns() { const y = H * 0.72; return { share: { x: W / 2, y, w: 230, h: 52 }, retry: { x: W / 2, y: y + 64, w: 230, h: 50 }, menu: { x: W / 2, y: y + 114, w: 200, h: 36 } }; }
+const inBox = (b, x, y) => Math.abs(x - b.x) < b.w / 2 && Math.abs(y - b.y) < b.h / 2;
+function box(b, fill, tcol, label, font = FD, size = 22) {
+  ctx.fillStyle = fill; ctx.fillRect(b.x - b.w / 2, b.y - b.h / 2, b.w, b.h);
+  ctx.strokeStyle = INK; ctx.lineWidth = 2; ctx.strokeRect(b.x - b.w / 2, b.y - b.h / 2, b.w, b.h);
+  text(label, b.x, b.y + 1, size, tcol, 'center', font);
+}
+function box2(b, fill, tcol, label, sub) {
+  ctx.fillStyle = fill; ctx.fillRect(b.x - b.w / 2, b.y - b.h / 2, b.w, b.h);
+  ctx.strokeStyle = INK; ctx.lineWidth = 2; ctx.strokeRect(b.x - b.w / 2, b.y - b.h / 2, b.w, b.h);
+  text(label, b.x, b.y - 9, 24, tcol, 'center', FD); text(sub, b.x, b.y + 17, 11.5, tcol, 'center', FB, 0.85);
+}
+function reasonText() {
+  if (G.reason === 'whiff') return G.whiffDiff !== null ? `${(-G.whiffDiff).toFixed(3)}秒 早く振って、隙を撃たれた` : '空振りした隙を 撃たれた';
+  if (G.diff !== null) return `${G.diff.toFixed(3)}秒 遅かった`;
+  return '反応できなかった';
+}
+function drawResult() {
+  const s = since(); if (s < 0.5) return;
+  ctx.fillStyle = 'rgba(241,233,216,.94)'; ctx.fillRect(0, 0, W, H);
+  blotch(W / 2 + 70, H * 0.13, 34, 21, SHU, 0.85);
+  text('被弾', W / 2 - 10, H * 0.13, 72, INK, 'center', FD);
+  if (G.mode === 'hard') { drawResultHard(s); return; }
+  text(`パリィ ${G.count}回`, W / 2, H * 0.25, 38, INK, 'center', FD);
+  text(G.lastSafe ? `${G.lastSafe}m まで 耐えた` : '1発目で 被弾', W / 2, H * 0.32, 20, SHU, 'center', FD);
+  text(`${G.d}m・到達 ${G.tf.toFixed(3)}秒の弾で`, W / 2, H * 0.39, 14, SUMI);
+  text(reasonText(), W / 2, H * 0.43, 17, INK);
+  text('人が見てから動けるのは 約0.2秒。', W / 2, H * 0.5, 13, SUMI);
+  text(`秒速${V}mの弾だと 約${Math.round(0.2 * V)}mが 限界ライン。`, W / 2, H * 0.535, 13, SUMI);
+  text(`ベスト ${G.best}回` + (G.bestD ? `（${G.bestD}mまで）` : '') + (G.newBest ? '　記録更新！' : ''), W / 2, H * 0.6, 15, G.newBest ? SHU : SUMI);
+  resultButtons(s);
+}
+function resultButtons(s) {
+  if (s <= 0.9) return;
+  const b = resultBtns(); box(b.share, INK, PAPER, 'Xで 記録を載せる'); box(b.retry, PAPER, INK, 'もう一度');
+  text('モードを選ぶ', b.menu.x, b.menu.y, 15, SUMI); ctx.fillStyle = SUMI; ctx.fillRect(b.menu.x - 44, b.menu.y + 11, 88, 1);
+}
+function drawResultHard(s) {
+  text(`連続パリィ ${G.count}回`, W / 2, H * 0.25, 36, INK, 'center', FD);
+  text('超ハードモード（10m）', W / 2, H * 0.32, 20, SHU, 'center', FD);
+  text(`弾が届くまで わずか ${G.tf.toFixed(3)}秒`, W / 2, H * 0.39, 14, SUMI);
+  text(reasonText(), W / 2, H * 0.43, 17, INK);
+  text('10mの弾は、まばたき（約0.1秒）より ずっと速い。', W / 2, H * 0.5, 13, SUMI);
+  text('見てからでは 絶対に間に合わない。', W / 2, H * 0.535, 13, SUMI);
+  text(`ベスト ${G.bestHard}回` + (G.newBest ? '　記録更新！' : ''), W / 2, H * 0.6, 15, G.newBest ? SHU : SUMI);
+  resultButtons(s);
+}
+function render() {
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.drawImage(paperCv, 0, 0);
+  ctx.setTransform(DPR * S, 0, 0, DPR * S, 0, 0);
+  if (G.shake > 0) { const a = G.shake * 16; ctx.translate((Math.random() - 0.5) * a, (Math.random() - 0.5) * a); }
+  if (G.state === 'title') drawTitle();
+  else { drawTop(); drawBottom(); }
+  ctx.setTransform(DPR * S, 0, 0, DPR * S, 0, 0);
+  if (G.state !== 'title') drawMute();
+  if (G.state === 'dead') drawResult();
+}
+
+// ================= 入力 =================
+function share() {
+  const url = /^https?:/.test(location.protocol) && location.hostname.endsWith('github.io') ? location.origin + location.pathname : URL_PUBLIC;
+  const msg = G.mode === 'hard'
+    ? (G.count > 0 ? `実弾パリィ【超ハード・10m】で ${G.count}回連続パリィ！
+弾が届くまで わずか0.012秒
+あなたは1回でも弾ける？
+#実弾パリィ`
+      : `実弾パリィ【超ハード・10m】、1回も弾けず…
+弾が届くまで わずか0.012秒
+あなたは弾ける？
+#実弾パリィ`)
+    : G.count > 0
+    ? `実弾パリィで ${G.count}回パリィ！\n${G.lastSafe}m先からの弾（到達${(G.lastSafe / V).toFixed(3)}秒）まで耐えた\nあなたは何mまで耐えられる？\n#実弾パリィ`
+    : `実弾パリィ、1発目で被弾…\n秒速${V}mの弾、あなたは弾ける？\n#実弾パリィ`;
+  const u = 'https://twitter.com/intent/tweet?text=' + encodeURIComponent(msg) + '&url=' + encodeURIComponent(url);
+  const w = window.open(u, '_blank'); if (!w) location.href = u;
+}
+function onPress(x, y, t) {
+  audioInit();
+  if (G.state !== 'title' && Math.hypot(x - L.mute.x, y - L.mute.y) < 22) { muted = !muted; store.set('jp_mute', muted); return; }
+  if (G.state === 'title') { const b = titleBtns(); if (inBox(b.normal, x, y)) startRun('normal'); else if (inBox(b.hard, x, y)) startRun('hard'); return; }
+  if (G.state === 'dead') {
+    if (G.reason === 'late' && G.diff === null && t - G.fireT < G.winE + 0.6) { G.diff = t - G.fireT - G.winE; return; } // 遅れた秒数を記録
+    if (since() > 0.9) { const b = resultBtns(); if (inBox(b.share, x, y)) share(); else if (inBox(b.retry, x, y)) startRun(); else if (inBox(b.menu, x, y)) setState('title'); }
+    return;
+  }
+  tap(t);
+}
+function evTime(e) { const ts = e.timeStamp; return (ts > 0 && ts < 1e11 ? ts : performance.now()) / 1000; }
+cv.addEventListener('pointerdown', e => { e.preventDefault(); onPress((e.clientX - OX) / S, (e.clientY - OY) / S, evTime(e)); });
+document.addEventListener('touchend', audioInit, { passive: true });
+document.addEventListener('contextmenu', e => e.preventDefault());
+document.addEventListener('gesturestart', e => e.preventDefault());
+window.addEventListener('keydown', e => {
+  if (e.repeat) return; audioInit();
+  if (G.state === 'title') { if (e.key === ' ' || e.key === 'Enter') startRun('normal'); else if (e.key.toLowerCase() === 'h') startRun('hard'); return; }
+  if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); onPress(-99, -99, evTime(e)); }
+});
+
+// ================= ループ =================
+resize();
+let last = performance.now();
+function frame(now) { const dt = Math.min(0.05, (now - last) / 1000); last = now; update(dt); render(); requestAnimationFrame(frame); }
+requestAnimationFrame(frame);
+if (document.fonts && document.fonts.load) { document.fonts.load('40px "Yuji Syuku"').catch(() => { }); document.fonts.load('16px "Zen Old Mincho"').catch(() => { }); }
+
+// テスト用（遊びには影響しません）
+window.__jp = { G, L, update, tap, startRun, setClock(f) { clock = f; } };
+})();
+</script>
+</body>
+</html>
