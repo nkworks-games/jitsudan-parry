@@ -175,7 +175,7 @@ const G = {
   d: 1000, prevD: 1000, aimDur: 1, fireT: 0, tf: 1, early: 0.16, tapT: null, reason: '', diff: 0, lastRT: null,
   shake: 0, swing: 0, t: 0, lastSafe: 0, recUntil: 0, whiffT: -9,
   mode: 'normal', bestHard: store.get('jp_best_hard', 0), winS: 0, winE: 0, ringStart: 0, ringDur: 1, whiffDiff: null
-};
+}; window.__nkwG = G;
 function setState(s) { G.state = s; G.st0 = clock(); }
 const since = () => clock() - G.st0;
 function startRun(mode = G.mode) { G.mode = mode; G.idx = 0; G.count = 0; G.newBest = false; G.prevD = mode === 'hard' ? 14 : 1400; G.lastSafe = 0; G.lastRT = null; nextStage(); }
@@ -542,5 +542,10 @@ if (document.fonts && document.fonts.load) { document.fonts.load('40px "Yuji Syu
 window.__jp = { G, L, update, tap, startRun, setClock(f) { clock = f; } };
 })();
 </script>
+<!-- nkw-ikkaku --><style>.nkw-ikk{display:inline-block;box-sizing:border-box;max-width:92vw;padding:5px 14px;border-radius:999px;background:rgba(255,255,255,.92);border:1px solid rgba(60,90,120,.35);color:#3c5a78;font:500 12.5px/1.4 "Hiragino Sans","Noto Sans JP",system-ui,sans-serif;text-decoration:none;white-space:nowrap;letter-spacing:.02em}#nkw-ikk{position:fixed;z-index:2147483000;transform:translate(-50%,-50%);transition:opacity .3s;box-shadow:0 2px 8px rgba(0,0,0,.12)}#nkw-ikk[hidden]{display:none}</style>
+<a id="nkw-ikk" class="nkw-ikk" href="https://nkworks-games.com/ikkaku-ichie/?from=jitsudan-parry" target="_blank" rel="noopener" hidden>漢字パズル「一画一会」体験版 ›</a>
+<script>(function(){var a=document.getElementById("nkw-ikk"),since=0;
+function cv(){var b=null,m=0;document.querySelectorAll("canvas").forEach(function(c){var r=c.getBoundingClientRect();if(r.width*r.height>m){m=r.width*r.height;b=r;}});return b;}
+setInterval(function(){var G=window.__nkwG,show=false;try{if(G&&(G.state==='dead')){if(!since)since=Date.now();if(Date.now()-since>1500){var r=cv();if(r){var S=r.width/360,H=r.height/S,y=Math.min(H-20,H*0.72+150);if(y!=null){a.style.left=(r.left+r.width/2)+"px";a.style.top=(r.top+y*S)+"px";show=true;}}}}else since=0;}catch(e){}a.hidden=!show;},250);})();</script>
 </body>
 </html>
