@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="google-adsense-account" content="ca-pub-2073267239630350">
 <title>実弾パリィ</title>
 <meta name="description" content="本物の弾速（秒速850m）の弾丸を刀でパリィ。何mまで耐えられる？">
 <!-- ▼Xのカード表示用（公開URLに合わせて書き換える） -->
@@ -17,15 +18,45 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Yuji+Syuku&family=Zen+Old+Mincho:wght@400;700&display=swap" rel="stylesheet">
 <style>
+:root{
+  --ad-h:50px;    /* 広告の帯の高さ（スマホ） */
+  --ad-gap:75px;  /* 広告の帯とゲームの間。いつも75px（スクリプト resize も75pxで固定） */
+}
+@media (orientation:landscape) and (min-width:728px) and (min-height:500px){:root{--ad-h:90px}}   /* 横長の画面（パソコン・横向きのタブレット）では帯を90pxに */
 html,body{margin:0;height:100%;background:#f1e9d8;overflow:hidden;overscroll-behavior:none}
 body{touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent}
 canvas{display:block;position:absolute;left:0;top:0}
 #sa{position:fixed;left:0;top:0;width:0;height:0;padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom);visibility:hidden}
+/* 広告の帯：画面のいちばん下。iPhoneのホームバーと重ならないよう、そのぶん下を空ける。広告が出ていなくても、この高さは変わらない */
+#ad-zone{position:fixed;left:0;right:0;bottom:0;z-index:10;height:var(--ad-h);padding-bottom:env(safe-area-inset-bottom,0px);background:#e2d6bf;box-shadow:0 -1px 0 rgba(0,0,0,.08);touch-action:manipulation;-webkit-user-select:auto;user-select:auto}
+#ad-banner{width:100%;height:var(--ad-h);overflow:hidden;display:flex;align-items:center;justify-content:center;max-height:var(--ad-h);contain:layout paint}
+#ad-banner ins{max-height:var(--ad-h)!important;overflow:hidden}
+#ad-banner ins.adsbygoogle[data-ad-status="unfilled"]{display:none!important}   /* 広告が来ない時は 空の四角を出さない（帯の高さは そのまま） */
+
 </style>
 </head>
 <body>
 <div id="sa"></div>
 <canvas id="c"></canvas>
+<!-- ▼広告バナーの場所（画面のいちばん下の帯）
+     ・帯の高さ：スマホは50px、横長の画面（パソコンなど）は90px。ゲームとの間は いつも75pxあけてあります
+     ・広告が出ない時も、この帯の高さは そのまま残ります（ゲームの位置は ずれません）
+     ・ゲームの操作は、この帯の上では反応しません -->
+<div id="ad-zone">
+  <div id="ad-banner">
+    <!-- ↓↓↓ AdSense の広告ユニットのコード（全ゲーム共通「ゲーム用バナー」・固定サイズ 320×50）↓↓↓ -->
+    <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-2073267239630350"
+         crossorigin="anonymous"></script>
+    <ins class="adsbygoogle"
+         style="display:inline-block;width:320px;height:50px"
+         data-ad-client="ca-pub-2073267239630350"
+         data-ad-slot="6261635446"></ins>
+    <script>
+         (adsbygoogle = window.adsbygoogle || []).push({});
+    </script>
+    <!-- ↑↑↑ ここまで ↑↑↑ -->
+  </div>
+</div>
 <noscript>JavaScriptをオンにして遊んでください</noscript>
 <script>
 (() => {
@@ -63,10 +94,14 @@ function layout() {
   L.sx = 52; L.ex = W - 52;
   L.mute = { x: W - 22, y: L.topH + 22 };
 }
+/* 広告の帯まわりの場所とり。帯の高さ（50px／横長の画面は90px）と ホームバーのぶんは CSS で決まる。ゲームとの間は いつも75px */
+const AD_GAP = 75; let AREA_B = 1e9;   // AREA_B＝ゲームの場所の下のはし（画面の上からのpx）。これより下は すき間と広告の帯
 function resize() {
   const sa = document.getElementById('sa'), cs = getComputedStyle(sa);
   const st = parseFloat(cs.paddingTop) || 0, sb = parseFloat(cs.paddingBottom) || 0;
-  const vw = window.innerWidth, vh = window.innerHeight - st - sb;
+  const zone = document.getElementById('ad-zone'), zoneH = zone ? zone.offsetHeight : sb;   // 帯＋ホームバーのぶん
+  const gap = zone ? AD_GAP : 0; document.documentElement.style.setProperty('--ad-gap', gap + 'px');
+  const vw = window.innerWidth, vh = Math.max(1, window.innerHeight - st - zoneH - gap); AREA_B = st + vh;   // vh＝帯と すき間より上の高さ
   S = Math.min(vw / W, vh / 600); H = Math.min(vh / S, 820);
   DPR = Math.min(window.devicePixelRatio || 1, 2.5);
   const cw = W * S, ch = H * S; OX = (vw - cw) / 2; OY = st + (vh - ch) / 2;
@@ -89,6 +124,11 @@ function makePaper() { // 和紙の質感（1回だけ描いておく）
   g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(80,60,30,0.2)'); p.fillStyle = g; p.fillRect(0, 0, W, H);
 }
 window.addEventListener('resize', resize);
+window.addEventListener('orientationchange', () => setTimeout(resize, 60)); if (window.visualViewport) window.visualViewport.addEventListener('resize', resize);   // 回転や大きさの変化を取りこぼさないための保険
+/* 画面を回した時などは、ホームバーのぶん（安全領域）が「resize」の合図より あとで変わることがある。0.25秒ごとに見くらべて、変わっていたら並べ直す */
+(() => { const sa = document.getElementById('sa'), z = document.getElementById('ad-zone'); const sig = () => { const c = getComputedStyle(sa); return innerWidth + '|' + innerHeight + '|' + c.paddingTop + '|' + c.paddingBottom + '|' + (z ? z.offsetHeight : 0); };
+  let last = sig(); setInterval(() => { const vv = window.visualViewport; if (vv && Math.abs(vv.scale - 1) > 0.01) return; const t = sig(); if (t !== last) { last = t; resize(); } }, 250); })();
+window.__adArea = () => ({ bottom: AREA_B, S, H, OX, OY });   // テスト用：ゲームの場所
 
 // ================= 保存 =================
 const store = {
